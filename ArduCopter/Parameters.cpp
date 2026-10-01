@@ -33,14 +33,8 @@
 #if FRAME_CONFIG == HELI_FRAME
     // 6 here is AP_Motors::MOTOR_FRAME_HELI
     #define DEFAULT_FRAME_CLASS 6
-#elif FRAME_CONFIG == HEXA_FRAME
-    #define DEFAULT_FRAME_CLASS 2   // AP_Motors::MOTOR_FRAME_HEXA
-
-#elif FRAME_CONFIG == QUAD_FRAME
-    #define DEFAULT_FRAME_CLASS 0   // AP_Motors::MOTOR_FRAME_QUAD
-
 #else
-    #define DEFAULT_FRAME_CLASS 2   // LOCKED: Hex X frame (default fallback)
+    #define DEFAULT_FRAME_CLASS 2   // LOCKED: Hex X frame (AP_Motors::MOTOR_FRAME_HEXA)
 #endif
 
 
@@ -1246,6 +1240,261 @@ const AP_Param::GroupInfo ParametersG2::var_info2[] = {
     // @Units: Hz
     // @User: Advanced
     AP_GROUPINFO("FS_EKF_FILT", 8, ParametersG2, fs_ekf_filt_hz, FS_EKF_FILT_DEFAULT),
+
+#if MODE_LOITER_ENABLED
+    // @Param: LTRN_ENABLE
+    // @DisplayName: L-Turn enable
+    // @Description: Enables the L-Turn (sharp, axis-decoupled corner) behaviour inside Loiter mode. When disabled Loiter behaves exactly as stock.
+    // @Values: 0:Disabled,1:Enabled
+    // @User: Standard
+    AP_GROUPINFO("LTRN_ENABLE", 9, ParametersG2, ltrn_enable, 0),
+
+    // @Param: LTRN_MIN_SPD
+    // @DisplayName: L-Turn minimum entry speed
+    // @Description: Minimum body-frame forward/backward speed required before a roll input can trigger an L-Turn. The forward speed must also dominate the lateral speed by LTRN_FWD_DOM and the pitch stick must have been used within the last 1.5 s, so that a sideways drift cannot be mistaken for a corner entry.
+    // @Range: 0.5 10
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_MIN_SPD", 10, ParametersG2, ltrn_min_spd, 3.0f),
+
+    // @Param: LTRN_ROLL_TRG
+    // @DisplayName: L-Turn roll trigger
+    // @Description: Normalised roll stick deflection required to trigger an L-Turn.
+    // @Range: 0.2 1.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_ROLL_TRG", 11, ParametersG2, ltrn_roll_trg, 0.60f),
+
+    // @Param: LTRN_ROLL_DOM
+    // @DisplayName: L-Turn roll dominance
+    // @Description: Amount by which the normalised roll stick must exceed the normalised pitch stick to trigger an L-Turn. Allows the pilot to sweep from pitch into roll without passing through centre.
+    // @Range: 0.0 1.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_ROLL_DOM", 12, ParametersG2, ltrn_roll_dom, 0.30f),
+
+    // @Param: LTRN_DECEL
+    // @DisplayName: L-Turn braking acceleration
+    // @Description: Body-X deceleration commanded during the braking phase of an L-Turn. Clamped at run time to the acceleration achievable within ANGLE_MAX / LOIT_ANG_MAX.
+    // @Range: 1 15
+    // @Units: m/s/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_DECEL", 13, ParametersG2, ltrn_decel, 4.0f),
+
+    // @Param: LTRN_LAT_SPD
+    // @DisplayName: L-Turn lateral speed
+    // @Description: Body-Y speed commanded at full roll stick during the lateral phase of an L-Turn. The hard vehicle limit is 8 m/s. The measured lateral speed overshoots this target by up to LTRN_LAT_LEAD, so the peak lateral speed of a turn is LTRN_LAT_SPD + LTRN_LAT_LEAD.
+    // @Range: 1 20
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_LAT_SPD", 14, ParametersG2, ltrn_lat_spd, 5.0f),
+
+    // @Param: LTRN_LAT_ACC
+    // @DisplayName: L-Turn lateral acceleration
+    // @Description: Body-Y acceleration limit used to ramp the lateral speed target during an L-Turn. Clamped at run time to the acceleration achievable within ANGLE_MAX / LOIT_ANG_MAX.
+    // @Range: 1 15
+    // @Units: m/s/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_LAT_ACC", 15, ParametersG2, ltrn_lat_acc, 4.0f),
+
+    // @Param: LTRN_JERK
+    // @DisplayName: L-Turn jerk limit
+    // @Description: Horizontal jerk limit applied to the position controller while an L-Turn is active, and to the acceleration feed forward during the entry brake and lateral phases only. The exit stop uses LTRN_EXIT_JERK instead. PSC_JERK_XY is restored on exit.
+    // @Range: 5 100
+    // @Units: m/s/s/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_JERK", 16, ParametersG2, ltrn_jerk, 30.0f),
+
+    // @Param: LTRN_XOVER
+    // @DisplayName: L-Turn crossover fraction
+    // @Description: Handover speed, as a fraction of the entry body-X speed, at and above which the braking axis may claim its full LTRN_XPRIO share of the acceleration budget. Below it the brake's share decays linearly to zero and the budget passes to the lateral axis. Lateral acceleration is commanded from the moment of trigger regardless of this value; this parameter shapes how quickly the budget transfers, not when lateral starts. Lower values hold the brake at full authority further into the turn (squarer corner); higher values hand over sooner (tighter carve).
+    // @Range: 0.0 1.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_XOVER", 17, ParametersG2, ltrn_xover, 0.25f),
+
+    // @Param: LTRN_DZ
+    // @DisplayName: L-Turn roll deadzone
+    // @Description: Normalised roll stick deflection below which the stick is treated as centred, ending the L-Turn and handing control back to Loiter.
+    // @Range: 0.05 0.4
+    // @User: Standard
+    AP_GROUPINFO("LTRN_DZ", 18, ParametersG2, ltrn_dz, 0.15f),
+
+    // @Param: LTRN_XPRIO
+    // @DisplayName: L-Turn brake axis priority
+    // @Description: Maximum share of the acceleration ceiling the braking (body-X) axis may claim when the commanded acceleration vector saturates, taken at and above the LTRN_XOVER handover speed. The share decays with remaining forward speed and the lateral axis receives the rest of the circular budget. This is a ceiling on the brake's share, not a fixed split. While forward speed is above LTRN_VXDB the share never falls below LTRN_XFLOOR.
+    // @Range: 0.0 1.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_XPRIO", 28, ParametersG2, ltrn_xprio, 0.60f),
+
+    // @Param: LTRN_VXDB
+    // @DisplayName: L-Turn brake dead-band
+    // @Description: Body-X speed below which the braking acceleration feed forward latches off for the remainder of the manoeuvre. Prevents the feed forward chattering as the forward speed crosses zero.
+    // @Range: 0.05 1.0
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_VXDB", 29, ParametersG2, ltrn_vxdb, 0.30f),
+
+    // @Param: LTRN_MARGIN
+    // @DisplayName: L-Turn lean angle margin
+    // @Description: Fraction of the achievable lean angle acceleration the L-Turn is allowed to command. Lower values leave more headroom for the position controller's own corrections.
+    // @Range: 0.70 1.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_MARGIN", 30, ParametersG2, ltrn_margin, 0.90f),
+
+    // @Param: LTRN_EXIT_T
+    // @DisplayName: L-Turn exit stop maximum time
+    // @Description: Duration after which the exit stop escalates. When the pilot re-centres the roll stick the L-Turn keeps control and actively brings the vehicle to rest, releasing to Loiter once horizontal speed falls below LTRN_EXIT_V. If this time expires, or LTRN_EXIT_D is travelled, first, the stop escalates to the full L-Turn ceiling and double jerk rather than releasing at speed; a further 2 x this time later it releases regardless, logged as a distinct exit reason, so the state machine cannot hang. Set to 0 to release to Loiter immediately when the stick is centred. Aborts always release immediately regardless of this value. A fresh valid roll trigger during the stop re-arms the manoeuvre.
+    // @Range: 0.0 3.0
+    // @Units: s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_T", 31, ParametersG2, ltrn_exit_t, 3.0f),
+
+    // @Param: LTRN_EXIT_V
+    // @DisplayName: L-Turn exit release speed
+    // @Description: Horizontal speed below which the exit stop releases control to Loiter. Lower values leave Loiter's own brake less to do at handover.
+    // @Range: 0.1 3.0
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_V", 32, ParametersG2, ltrn_exit_v, 0.50f),
+
+    // @Param: LTRN_XFLOOR
+    // @DisplayName: L-Turn brake share floor
+    // @Description: Minimum share of the acceleration ceiling the braking (body-X) axis receives while forward speed is above LTRN_VXDB, whatever the speed-scheduled split computes. Keeps forward velocity actively driven to zero during the lateral phase instead of leaving it for the exit, so that the exit stop has only the lateral axis left to kill. Once forward speed falls below LTRN_VXDB the brake latches off as before.
+    // @Range: 0.0 1.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_XFLOOR", 33, ParametersG2, ltrn_xfloor, 0.60f),
+
+    // @Param: LTRN_EXIT_D
+    // @DisplayName: L-Turn exit stop maximum distance
+    // @Description: Ground distance after which the exit stop escalates. If the stop has not brought speed below LTRN_EXIT_V within this distance it does not release: it raises its acceleration ceiling to the full L-Turn ceiling and doubles its jerk, and continues to the normal handover. A release at speed would step the acceleration demand, which is what this avoids.
+    // @Range: 0.5 10.0
+    // @Units: m
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_D", 34, ParametersG2, ltrn_exit_d, 8.0f),
+
+    // @Param: LTRN_EXIT_TC
+    // @DisplayName: L-Turn exit stop follow time constant
+    // @Description: Time constant with which the exit stop follows the aircraft instead of pulling it back onto the planned stop. During the stop the position target is bled towards the aircraft's actual position, and the stop's velocity target is eased down to the aircraft's velocity whenever the aircraft is braking harder than planned. Without this, an aircraft that stops short of the planned stop point is pulled forward to it, which reverses the lean at the end of the turn. Smaller values follow the aircraft more tightly. Set to 0 to disable.
+    // @Range: 0.0 1.0
+    // @Units: s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_TC", 35, ParametersG2, ltrn_exit_tc, 0.30f),
+
+    // @Param: LTRN_EXIT_ACC
+    // @DisplayName: L-Turn exit stop acceleration
+    // @Description: Acceleration ceiling for the exit stop (states ExitStopX and ExitStopY). Clamped at run time to the L-Turn ceiling derived from ANGLE_MAX / LOIT_ANG_MAX x LTRN_MARGIN, so it can only lower the exit lean. An escalated stop (see LTRN_EXIT_T) ignores this and uses the full L-Turn ceiling.
+    // @Range: 0.5 6
+    // @Units: m/s/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_ACC", 47, ParametersG2, ltrn_exit_acc, 3.0f),
+
+    // @Param: LTRN_EXIT_JERK
+    // @DisplayName: L-Turn exit stop jerk limit
+    // @Description: Jerk limit for the acceleration feed forward during the exit stop, including the stick blend. Capped at the position controller's own jerk limit like LTRN_JERK. It applies only once the feed forward has stopped driving the vehicle along its own velocity: a feed forward left over from the lateral phase is the pilot's own acceleration and is removed at LTRN_JERK, not at this slower rate. An escalated stop doubles this value.
+    // @Range: 1 20
+    // @Units: m/s/s/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_JERK", 48, ParametersG2, ltrn_exit_jerk, 6.0f),
+
+    // @Param: LTRN_FWD_DOM
+    // @DisplayName: L-Turn forward dominance
+    // @Description: Ratio by which the body-X speed must exceed the body-Y speed for a roll input to trigger an L-Turn. A corner entry is a vehicle travelling forwards; a vehicle already sliding sideways at a similar speed is mid-manoeuvre, and in log_0084 that state triggered turns at the LTRN_MIN_SPD floor with 5-7.6 m/s of lateral speed.
+    // @Range: 1.0 4.0
+    // @User: Standard
+    AP_GROUPINFO("LTRN_FWD_DOM", 49, ParametersG2, ltrn_fwd_dom, 1.5f),
+
+    // @Param: LTRN_PIT_ARM
+    // @DisplayName: L-Turn pitch arming input
+    // @Description: Pitch stick deflection that arms the L-Turn trigger. The trigger only fires if the pitch stick exceeded this within the last 1.5 seconds, so a roll input given long after the pilot stopped commanding forward flight cannot start a turn. Set to 0 to disable the check.
+    // @Range: 0 1
+    // @User: Standard
+    AP_GROUPINFO("LTRN_PIT_ARM", 50, ParametersG2, ltrn_pit_arm, 0.30f),
+
+    // @Param: LTRN_EXIT_YSHR
+    // @DisplayName: L-Turn exit lateral share
+    // @Description: Fraction of the lateral stopping law the exit stop commands while it is still killing forward speed. The body-X axis is served first by the vector clamp and body-Y receives whatever is left of the acceleration circle, so this trades the perfectly straight tail for a lateral brake that starts immediately instead of after the X stage. Set to 0 for the original behaviour, where body-Y coasted until body-X was dead.
+    // @Range: 0 1
+    // @User: Standard
+    AP_GROUPINFO("LTRN_EXIT_YSHR", 51, ParametersG2, ltrn_exit_yshr, 0.5f),
+
+    // @Param: LTRN_LAT_LEAD
+    // @DisplayName: L-Turn lateral target lead
+    // @Description: Maximum amount by which the lateral velocity target may lead the measured body-Y speed while the target is growing. Without this the target ramps at LTRN_LAT_ACC whether the vehicle is following or not, and the accumulated lead is flown off as overshoot past LTRN_LAT_SPD once the stick is centred.
+    // @Range: 0.3 3.0
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("LTRN_LAT_LEAD", 52, ParametersG2, ltrn_lat_lead, 1.0f),
+#endif
+
+#if MODE_AUTO_ENABLED
+    // @Param: KFT_SA_ENABLE
+    // @DisplayName: Semi-auto altitude bias enable
+    // @Description: Enables the semi-auto altitude bias. When enabled the pilot may use the throttle stick during an AUTO mission to raise or lower the whole mission's altitude without editing the mission. The bias is held when the stick is centred, carries across waypoint transitions, and is reset to zero every time AUTO is entered. When disabled the vehicle behaves exactly as stock.
+    // @Values: 0:Disabled,1:Enabled
+    // @User: Advanced
+    AP_GROUPINFO("KFT_SA_ENABLE", 19, ParametersG2, kft_sa_enable, 0),
+
+    // @Param: KFT_SA_RATE
+    // @DisplayName: Semi-auto altitude bias rate
+    // @Description: Rate at which the semi-auto altitude bias changes when the throttle stick is held at full deflection. Stick deflection from centre sets the rate of change of the bias, so centring the stick holds the current bias.
+    // @Range: 10 200
+    // @Units: cm/s
+    // @User: Advanced
+    AP_GROUPINFO("KFT_SA_RATE", 20, ParametersG2, kft_sa_rate, 50.0f),
+
+    // @Param: KFT_SA_MAX
+    // @DisplayName: Semi-auto altitude bias maximum
+    // @Description: Maximum upward altitude bias the pilot may command during an AUTO mission. The resulting altitude is additionally clamped against the maximum altitude fence when that fence is enabled.
+    // @Range: 0 2000
+    // @Units: cm
+    // @User: Advanced
+    AP_GROUPINFO("KFT_SA_MAX", 21, ParametersG2, kft_sa_max, 1000.0f),
+
+    // @Param: KFT_SA_MIN
+    // @DisplayName: Semi-auto altitude bias minimum
+    // @Description: Maximum downward altitude bias the pilot may command during an AUTO mission, expressed as a negative number. The resulting altitude is additionally clamped against a hard minimum altitude floor.
+    // @Range: -1000 0
+    // @Units: cm
+    // @User: Advanced
+    AP_GROUPINFO("KFT_SA_MIN", 22, ParametersG2, kft_sa_min, -300.0f),
+#endif
+
+    // @Param: KFT_ARM_EN
+    // @DisplayName: KFT two-stick arming enable
+    // @Description: Enables DJI-style two-stick arming and disarming. With a mode 2 transmitter, ARM is throttle low + yaw right + roll left + pitch up held for KFT_ARM_MS, and DISARM is throttle low + yaw left + roll right + pitch up held for KFT_ARM_DIS_MS. The gesture must be held continuously; releasing it resets the hold timer. Arming still runs the full pre-arm and arming check pipeline. When enabled this replaces the built-in rudder arming (and the rudder-triggered AutoTrim) entirely, so ARMING_RUDDER should be set to 0.
+    // @Values: 0:Disabled,1:Enabled
+    // @User: Standard
+    AP_GROUPINFO("KFT_ARM_EN", 23, ParametersG2, kft_arm_en, 0),
+
+    // @Param: KFT_ARM_LOW
+    // @DisplayName: KFT two-stick arming low threshold
+    // @Description: Raw RC PWM below which a stick is treated as LOW by the KFT two-stick arming gesture.
+    // @Range: 1000 1500
+    // @Units: PWM
+    // @User: Standard
+    AP_GROUPINFO("KFT_ARM_LOW", 24, ParametersG2, kft_arm_low, 1280),
+
+    // @Param: KFT_ARM_HIGH
+    // @DisplayName: KFT two-stick arming high threshold
+    // @Description: Raw RC PWM above which a stick is treated as HIGH by the KFT two-stick arming gesture.
+    // @Range: 1500 2000
+    // @Units: PWM
+    // @User: Standard
+    AP_GROUPINFO("KFT_ARM_HIGH", 25, ParametersG2, kft_arm_high, 1720),
+
+    // @Param: KFT_ARM_MS
+    // @DisplayName: KFT two-stick arm hold time
+    // @Description: Time the KFT arm gesture must be held continuously before the vehicle arms.
+    // @Range: 100 5000
+    // @Units: ms
+    // @User: Standard
+    AP_GROUPINFO("KFT_ARM_MS", 26, ParametersG2, kft_arm_ms, 500),
+
+    // @Param: KFT_ARM_DIS_MS
+    // @DisplayName: KFT two-stick disarm hold time
+    // @Description: Time the KFT disarm gesture must be held continuously before the vehicle disarms.
+    // @Range: 100 5000
+    // @Units: ms
+    // @User: Standard
+    AP_GROUPINFO("KFT_ARM_DIS_MS", 27, ParametersG2, kft_arm_dis_ms, 2000),
 
     // ID 62 is reserved for the AP_SUBGROUPEXTENSION
 

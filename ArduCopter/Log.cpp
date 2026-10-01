@@ -386,6 +386,102 @@ void Copter::Log_Write_Guided_Attitude_Target(ModeGuided::SubMode target_type, f
     logger.WriteBlock(&pkt, sizeof(pkt));
 }
 
+#if MODE_LOITER_ENABLED
+// NOTE: AP_Logger's FMT record carries char format[16] / char labels[64], and FMTU
+// carries char units[16] / char multipliers[16].  A log message therefore cannot have
+// more than 16 fields, and the label list cannot exceed 64 characters.  Exceeding
+// either is truncated silently at write time - it is not caught by any assert on this
+// target - and every standard parser then reads the message with the wrong layout.
+// Keep this struct at 16 fields and re-count the four strings after any change.
+struct PACKED log_LTurn {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t state;
+    float state_timer;
+    float vx;
+    float vy;
+    float target_vx;
+    float target_vy;
+    float accel_x;
+    float accel_y;
+    float accel_x_raw;
+    float accel_y_raw;
+    float psc_accel_des;
+    float roll_in;
+    float pos_error;
+    float psc_vel_des;
+    uint8_t exit_reason;
+};
+
+// Write an L-turn (LTRN) state machine record.  Called every loop while the state
+// machine is not INACTIVE, and once more on the loop an exit fires.
+// Speeds are m/s and accelerations m/s/s in the latched heading's body frame; the
+// roll input is normalised -1 to 1.
+// The exit record is written critically so it cannot be dropped under logging load -
+// that record is the only place the roll value compared by the exit test appears.
+void Copter::Log_Write_LTurn(uint8_t state_in, float state_timer_s,
+                             float vx_ms, float vy_ms, float tgt_vx_ms, float tgt_vy_ms,
+                             float accel_x_mss, float accel_y_mss,
+                             float accel_x_raw_mss, float accel_y_raw_mss,
+                             float psc_accel_des_mss, float roll_norm, float pos_err_m,
+                             float psc_vel_des_ms, uint8_t exit_reason_in,
+                             bool is_critical)
+{
+    const log_LTurn pkt {
+        LOG_PACKET_HEADER_INIT(LOG_LTURN_MSG),
+        time_us     : AP_HAL::micros64(),
+        state       : state_in,
+        state_timer : state_timer_s,
+        vx          : vx_ms,
+        vy          : vy_ms,
+        target_vx   : tgt_vx_ms,
+        target_vy   : tgt_vy_ms,
+        accel_x     : accel_x_mss,
+        accel_y     : accel_y_mss,
+        accel_x_raw : accel_x_raw_mss,
+        accel_y_raw : accel_y_raw_mss,
+        psc_accel_des : psc_accel_des_mss,
+        roll_in     : roll_norm,
+        pos_error   : pos_err_m,
+        psc_vel_des : psc_vel_des_ms,
+        exit_reason : exit_reason_in
+    };
+    if (is_critical) {
+        logger.WriteCriticalBlock(&pkt, sizeof(pkt));
+    } else {
+        logger.WriteBlock(&pkt, sizeof(pkt));
+    }
+}
+#endif  // MODE_LOITER_ENABLED
+
+#if MODE_AUTO_ENABLED
+struct PACKED log_SemiAuto {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float offset;
+    float rate;
+    float wp_alt;
+    uint8_t active;
+};
+
+// Write a semi-auto altitude bias record.  Called every loop while in AUTO with
+// KFT_SA_ENABLE set.  Used to reconcile actual spray coverage against the
+// planned grid during post-flight analysis.  Inputs are in cm and cm/s, logged
+// in metres and m/s.
+void Copter::Log_Write_SemiAuto(float offset_cm, float rate_cms, float wp_alt_cm, bool active)
+{
+    const log_SemiAuto pkt {
+        LOG_PACKET_HEADER_INIT(LOG_SEMIAUTO_MSG),
+        time_us     : AP_HAL::micros64(),
+        offset      : offset_cm * 0.01f,
+        rate        : rate_cms * 0.01f,
+        wp_alt      : wp_alt_cm * 0.01f,
+        active      : active
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+#endif  // MODE_AUTO_ENABLED
+
 // type and unit information can be found in
 // libraries/AP_Logger/Logstructure.h; search for "log_Units" for
 // units and "Format characters" for field type information
@@ -527,6 +623,43 @@ const struct LogStructure Copter::log_structure[] = {
 
     { LOG_GUIDED_ATTITUDE_TARGET_MSG, sizeof(log_Guided_Attitude_Target),
       "GUIA",  "QBffffffff",    "TimeUS,Type,Roll,Pitch,Yaw,RollRt,PitchRt,YawRt,Thrust,ClimbRt", "s-dddkkk-n", "F-000000-0" , true },
+
+#if MODE_LOITER_ENABLED
+// @LoggerMessage: LTRN
+// @Description: Loiter L-Turn state machine. Logged every loop while an L-Turn is active, plus one critical record on the loop the manoeuvre exits.
+// @Field: TimeUS: Time since system startup
+// @Field: St: L-Turn state (0:Inactive, 1:Braking, 2:Lateral, 3:ExitStopX, 4:ExitStopY, 5:ExitBlend)
+// @Field: STmr: Time spent in the current state (restarts at the exit stop's X to Y stage change)
+// @Field: VX: Current body-X speed
+// @Field: VY: Current body-Y speed
+// @Field: TVX: Commanded body-X speed (zero except during the exit stop)
+// @Field: TVY: Commanded body-Y speed
+// @Field: AX: Body-X acceleration commanded after the vector clamp and jerk slew
+// @Field: AY: Body-Y acceleration commanded after the vector clamp and jerk slew
+// @Field: AXR: Body-X acceleration demand before the vector clamp
+// @Field: AYR: Body-Y acceleration demand before the vector clamp
+// @Field: DA: Magnitude of PosControl's desired (feed forward) horizontal acceleration - the value Loiter overwrites at handover
+// @Field: RIn: Normalised pilot roll input, the exact value the exit test compared
+// @Field: PErr: Horizontal position controller error magnitude
+// @Field: DV: Magnitude of PosControl's desired horizontal velocity - the value Loiter inherits at handover. Total measured speed is |VX,VY|
+// @Field: ER: Exit reason (0:None, 1:StickCentred, 2:RCLoss, 3:EKF, 4:Battery, 5:Landed, 6:NotFlying, 7:ModeChange, 8:Stopped, 9:ExitTimeout, 10:ExitDistance, 11:HandoverTimeout, 12:StickBlend)
+
+    { LOG_LTURN_MSG, sizeof(log_LTurn),
+      "LTRN",  "QBfffffffffffffB",  "TimeUS,St,STmr,VX,VY,TVX,TVY,AX,AY,AXR,AYR,DA,RIn,PErr,DV,ER", "s-snnnnooooo-mn-", "F-0000000000000-" , true },
+#endif
+
+#if MODE_AUTO_ENABLED
+// @LoggerMessage: SAOF
+// @Description: Semi-auto altitude bias. Logged every loop while in AUTO with KFT_SA_ENABLE set.
+// @Field: TimeUS: Time since system startup
+// @Field: Ofs: Altitude bias currently applied on top of the planned mission altitude
+// @Field: Rate: Rate of change of the bias commanded by the pilot's throttle stick
+// @Field: WPAlt: Planned altitude of the current waypoint above home
+// @Field: Act: 1 if the pilot is currently permitted to move the bias
+
+    { LOG_SEMIAUTO_MSG, sizeof(log_SemiAuto),
+      "SAOF",  "QfffB",  "TimeUS,Ofs,Rate,WPAlt,Act", "smnm-", "F0000" , true },
+#endif
 };
 
 uint8_t Copter::get_num_log_structures() const

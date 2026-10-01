@@ -56,6 +56,9 @@ public:
     /// get_shaping_jerk_xy_cmsss - gets the jerk limit of the xy kinematic path generation in cm/s/s/s
     float get_shaping_jerk_xy_cmsss() const { return _shaping_jerk_xy * 100.0; }
 
+    /// get_max_jerk_xy_cmsss - gets the effective xy jerk limit in cm/s/s/s: PSC_JERK_XY as limited by the attitude controller's rate and acceleration limits in set_max_speed_accel_xy()
+    float get_max_jerk_xy_cmsss() const { return _jerk_max_xy_cmsss; }
+
 
     ///
     /// 3D position shaper
@@ -304,6 +307,9 @@ public:
 
     /// get_vel_desired_cms - returns desired velocity in cm/s in NEU
     const Vector3f& get_vel_desired_cms() { return _vel_desired; }
+
+    /// get_accel_desired_cmss - returns desired (feed forward) acceleration in cm/s/s in NEU
+    const Vector3f& get_accel_desired_cmss() const { return _accel_desired; }
 
     // get_vel_target_cms - returns the target velocity in NEU cm/s
     const Vector3f& get_vel_target_cms() const { return _vel_target; }

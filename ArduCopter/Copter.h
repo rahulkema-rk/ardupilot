@@ -890,6 +890,18 @@ private:
     void Log_Write_SysID_Setup(uint8_t systemID_axis, float waveform_magnitude, float frequency_start, float frequency_stop, float time_fade_in, float time_const_freq, float time_record, float time_fade_out);
     void Log_Write_SysID_Data(float waveform_time, float waveform_sample, float waveform_freq, float angle_x, float angle_y, float angle_z, float accel_x, float accel_y, float accel_z);
     void Log_Write_Vehicle_Startup_Messages();
+#if MODE_LOITER_ENABLED
+    void Log_Write_LTurn(uint8_t state_in, float state_timer_s,
+                         float vx_ms, float vy_ms, float tgt_vx_ms, float tgt_vy_ms,
+                         float accel_x_mss, float accel_y_mss,
+                         float accel_x_raw_mss, float accel_y_raw_mss,
+                         float psc_accel_des_mss, float roll_norm, float pos_err_m,
+                         float psc_vel_des_ms, uint8_t exit_reason_in,
+                         bool is_critical);
+#endif
+#if MODE_AUTO_ENABLED
+    void Log_Write_SemiAuto(float offset_cm, float rate_cms, float wp_alt_cm, bool active);
+#endif
 #endif  // HAL_LOGGING_ENABLED
 
     // mode.cpp
@@ -918,6 +930,20 @@ private:
 
     // motors.cpp
     void arm_motors_check();
+    void kft_stick_arming_check();
+    bool kft_stick_arm_gesture() const;
+    bool kft_stick_disarm_gesture() const;
+    uint32_t kft_stick_notify(const char *label, uint32_t elapsed_ms, uint32_t total_ms, uint32_t last_notify_ms);
+    // state for the KFT two-stick (DJI-style) arming gesture, see motors.cpp
+    struct {
+        uint32_t arm_start_ms;      // millis() when the arm gesture was first seen
+        uint32_t disarm_start_ms;   // millis() when the disarm gesture was first seen
+        uint32_t arm_notify_ms;     // millis() of the last "ARMING..." progress message
+        uint32_t disarm_notify_ms;  // millis() of the last "DISARMING..." progress message
+        bool holding_arm;           // true while the arm gesture is being held
+        bool holding_disarm;        // true while the disarm gesture is being held
+        bool rudder_warned;         // true once we have warned that ARMING_RUDDER is non-zero
+    } kft_stick_arm;
     void auto_disarm_check();
     void motors_output();
     void lost_vehicle_check();

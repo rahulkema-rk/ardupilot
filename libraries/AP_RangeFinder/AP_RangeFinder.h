@@ -185,6 +185,11 @@ public:
 #if AP_RANGEFINDER_HEXSOONRADAR_ENABLED
         HEXSOON_RADAR = 44,
 #endif
+#if AP_RANGEFINDER_JIYI_CAN_ENABLED
+        // out-of-tree backend: numbered well clear of upstream's sequential
+        // allocations so a future upstream type cannot collide with saved params
+        JIYI_CAN = 120,
+#endif
 #if AP_RANGEFINDER_SIM_ENABLED
         SIM = 100,
 #endif

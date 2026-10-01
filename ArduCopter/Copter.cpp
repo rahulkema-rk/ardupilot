@@ -686,6 +686,11 @@ void Copter::three_hz_loop()
 
     // check if avoidance should be enabled based on alt
     low_alt_avoidance();
+
+#if MODE_AUTO_ENABLED
+    // publish the semi-auto altitude bias to the GCS
+    mode_auto.semi_auto_send_telemetry();
+#endif
 }
 
 // one_hz_loop - runs at 1Hz

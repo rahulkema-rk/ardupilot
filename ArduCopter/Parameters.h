@@ -685,6 +685,49 @@ public:
     AP_Float pldp_range_finder_maximum_m;
     AP_Float pldp_delay_s;
     AP_Float pldp_descent_speed_ms;
+
+#if MODE_LOITER_ENABLED
+    // L-turn (LTRN) parameters - sharp axis-decoupled corner inside Loiter
+    AP_Int8  ltrn_enable;
+    AP_Float ltrn_min_spd;
+    AP_Float ltrn_roll_trg;
+    AP_Float ltrn_roll_dom;
+    AP_Float ltrn_decel;
+    AP_Float ltrn_lat_spd;
+    AP_Float ltrn_lat_acc;
+    AP_Float ltrn_jerk;
+    AP_Float ltrn_xover;
+    AP_Float ltrn_dz;
+    AP_Float ltrn_xprio;
+    AP_Float ltrn_vxdb;
+    AP_Float ltrn_margin;
+    AP_Float ltrn_exit_t;
+    AP_Float ltrn_exit_v;
+    AP_Float ltrn_xfloor;
+    AP_Float ltrn_exit_d;
+    AP_Float ltrn_exit_tc;
+    AP_Float ltrn_exit_acc;
+    AP_Float ltrn_exit_jerk;
+    AP_Float ltrn_fwd_dom;
+    AP_Float ltrn_pit_arm;
+    AP_Float ltrn_exit_yshr;
+    AP_Float ltrn_lat_lead;
+#endif
+
+#if MODE_AUTO_ENABLED
+    // Semi-auto (KFT_SA) parameters - pilot altitude bias applied across an AUTO mission
+    AP_Int8  kft_sa_enable;
+    AP_Float kft_sa_rate;
+    AP_Float kft_sa_max;
+    AP_Float kft_sa_min;
+
+    // KFT two-stick (DJI-style) arming
+    AP_Int8  kft_arm_en;
+    AP_Int16 kft_arm_low;
+    AP_Int16 kft_arm_high;
+    AP_Int16 kft_arm_ms;
+    AP_Int16 kft_arm_dis_ms;
+#endif
 };
 
 extern const AP_Param::Info        var_info[];

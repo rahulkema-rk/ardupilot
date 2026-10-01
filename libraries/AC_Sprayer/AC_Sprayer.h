@@ -28,6 +28,8 @@
 #define AC_SPRAYER_DEFAULT_SPEED_MIN        100     ///< we must be travelling at least 1m/s to begin spraying
 #define AC_SPRAYER_DEFAULT_TURN_ON_DELAY    100     ///< delay between when we reach the minimum speed and we begin spraying.  This reduces the likelihood of constantly turning on/off the pump
 #define AC_SPRAYER_DEFAULT_SHUT_OFF_DELAY   1000    ///< shut-off delay in milli seconds.  This reduces the likelihood of constantly turning on/off the pump
+#define AC_SPRAYER_DEFAULT_PUMP_MODE        0       ///< default pump mode: rate-proportional to ground speed
+#define AC_SPRAYER_DEFAULT_PUMP_PCT         0.0f    ///< default manual pump duty cycle expressed as a percentage from 0 to 100
 
 /// @class  AC_Sprayer
 /// @brief  Object managing a crop sprayer comprised of a spinner and a pump both controlled by pwm
@@ -71,6 +73,8 @@ private:
     AP_Int8         _pump_min_pct;          ///< minimum pump rate (expressed as a percentage from 0 to 100)
     AP_Int16        _spinner_pwm;           ///< pwm rate of spinner
     AP_Float        _speed_min;             ///< minimum speed in cm/s above which the sprayer will be started
+    AP_Int8         _pump_mode;             ///< pump output mode (0 = rate-proportional to ground speed, 1 = manual fixed duty cycle)
+    AP_Float        _pump_pct;              ///< commanded pump duty cycle (0 to 100) used when _pump_mode is manual
 
     /// flag bitmask
     struct sprayer_flags_type {

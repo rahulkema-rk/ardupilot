@@ -771,6 +771,22 @@ private:
         float up;     // desired speed upwards in m/s. 0 if unset
         float down;   // desired speed downwards in m/s. 0 if unset
     } desired_speed_override;
+
+    // Semi-auto altitude bias (KFT_SA_*): pilot-commanded offset applied to the
+    // whole mission's altitude via the position controller's Z offset.  The
+    // mission itself is never modified.  Reset to zero on every AUTO entry.
+    void update_semi_auto();
+    bool semi_auto_allowed() const;
+    void apply_semi_auto_altitude_limits();
+
+    float _sa_offset_cm;    // current altitude bias, cm
+    float _sa_rate_cms;     // current rate of change of the bias, cm/s
+    float _sa_wp_alt_cm;    // planned alt above home of the current wp, cm (for logging)
+    bool  _sa_active;       // true while the pilot is permitted to move the bias
+
+public:
+    // send the current semi-auto altitude bias to the GCS.  called at 3Hz.
+    void semi_auto_send_telemetry();
 };
 
 #if AUTOTUNE_ENABLED
@@ -1281,6 +1297,7 @@ public:
 
     bool init(bool ignore_checks) override;
     void run() override;
+    void exit() override;
 
     bool requires_GPS() const override { return true; }
     bool has_manual_throttle() const override { return false; }
@@ -1317,6 +1334,93 @@ private:
     bool _precision_loiter_enabled;
     bool _precision_loiter_active; // true if user has switched on prec loiter
 #endif
+
+    // L-Turn (LTRN): sharp, axis-decoupled corner driven directly through
+    // AC_PosControl, bypassing loiter_nav's velocity drag model.  When the state
+    // is INACTIVE the mode behaves exactly as stock Loiter.
+    enum class LTurnState : uint8_t {
+        INACTIVE = 0,
+        BRAKING  = 1,
+        LATERAL  = 2,
+        EXITING  = 3,
+    };
+
+    // every exit path has its own code; these are logged in LTRN.ER and named in the
+    // GCS message so a log never has to be guessed at
+    enum class LTurnExit : uint8_t {
+        NONE          = 0,
+        STICK_CENTRED = 1,
+        RC_LOSS       = 2,
+        EKF_FAILSAFE  = 3,
+        BATT_FAILSAFE = 4,
+        LANDED        = 5,
+        NOT_FLYING    = 6,
+        MODE_CHANGE   = 7,
+        STOPPED       = 8,     // EXITING brought speed below LTRN_EXIT_V
+        EXIT_TIMEOUT  = 9,     // EXITING ran for LTRN_EXIT_T without getting there
+        EXIT_DISTANCE = 10,    // EXITING travelled LTRN_EXIT_D without getting there
+        HANDOVER_TIMEOUT = 11, // speed reached LTRN_EXIT_V but PosControl never matched Loiter's handover state
+        STICK_BLEND   = 12,    // exit blend brought the feed forward onto the held stick demand
+    };
+    static const char *ltrn_exit_name(LTurnExit reason);
+
+    // returns true if the L-turn controller has taken over the horizontal axes this loop
+    bool ltrn_update();
+    // the single accessor for pilot roll input; the exit test, the trigger test and the
+    // log all call this so the logged value is provably the compared value
+    float ltrn_roll_input() const;
+    float ltrn_pitch_input() const;
+    bool ltrn_trigger_check(float roll_in, float pitch_in) const;
+    void ltrn_enter(float roll_in, bool fresh_entry);
+    void ltrn_begin_exit(LTurnExit reason, float roll_in);
+    void ltrn_finish_exit(LTurnExit reason, float roll_in);
+    LTurnExit ltrn_abort_reason() const;
+    void ltrn_update_accel_limits();
+    void ltrn_set_jerk(float jerk_msss);
+    void ltrn_restore_jerk();
+    void ltrn_apply_limits();
+    Vector2f ltrn_body_velocity_ms() const;
+    Vector2f ltrn_ne_to_body(const Vector2f &ne) const;
+#if HAL_LOGGING_ENABLED
+    void ltrn_log(float roll_in, const Vector2f &vel_body_ms,
+                  const Vector2f &vel_target_body_ms, const Vector2f &accel_raw_ms,
+                  const Vector2f &accel_out_ms, LTurnExit reason) const;
+#endif
+
+    LTurnState _ltrn_state = LTurnState::INACTIVE;
+    float _ltrn_yaw_cd = 0.0f;              // latched heading in centi-degrees
+    float _ltrn_cos_yaw = 1.0f;             // cosine of the latched heading
+    float _ltrn_sin_yaw = 0.0f;             // sine of the latched heading
+    float _ltrn_entry_vx_ms = 0.0f;         // signed body-X speed at the moment of trigger
+    float _ltrn_vy_target_ms = 0.0f;        // rate limited body-Y velocity target
+    float _ltrn_ax_ff_ms = 0.0f;            // slew limited body-X accel feed forward
+    float _ltrn_ay_ff_ms = 0.0f;            // slew limited body-Y accel feed forward
+    float _ltrn_decel_ms = 0.0f;            // LTRN_DECEL after the lean angle clamp
+    float _ltrn_lat_acc_ms = 0.0f;          // LTRN_LAT_ACC after the lean angle clamp
+    float _ltrn_ceiling_ms = 0.0f;          // accel vector ceiling in force this loop
+    float _ltrn_saved_speed_cms = 0.0f;     // PosControl horizontal speed limit saved on entry
+    float _ltrn_saved_accel_cmss = 0.0f;    // PosControl horizontal accel limit saved on entry
+    float _ltrn_saved_jerk_msss = 0.0f;     // PSC_JERK_XY saved on entry
+    uint32_t _ltrn_state_ms = 0;            // system time the current state was entered
+    uint32_t _ltrn_exit_start_ms = 0;       // system time the EXITING stop began
+    AP_Float *_ltrn_psc_jerk = nullptr;     // cached pointer to PSC_JERK_XY, nullptr if not found
+    AP_Float *_ltrn_loit_ang_max = nullptr; // cached pointer to LOIT_ANG_MAX, nullptr if not found
+    bool _ltrn_params_found = false;        // true once the parameter lookups above have been attempted
+    bool _ltrn_jerk_overridden = false;     // true while PSC_JERK_XY holds our value
+    bool _ltrn_clamp_warned = false;        // one-shot lean angle clamp warning latch
+    bool _ltrn_brake_latched_off = false;   // true once |VX| fell below LTRN_VXDB
+    Vector2f _ltrn_exit_vel_ms;             // EXITING stop trajectory velocity, latched body frame
+    float _ltrn_exit_dist_m = 0.0f;         // ground distance travelled during the EXITING stop
+    bool _ltrn_exit_x_done = false;         // EXITING has finished its body-X stage
+    uint32_t _ltrn_handover_start_ms = 0;   // system time speed first fell below LTRN_EXIT_V, 0 if not yet
+    Vector2f _ltrn_last_vel_target_ms;      // body velocity target of the last loop, for the exit record
+    Vector2f _ltrn_last_accel_raw_ms;       // raw body accel demand of the last loop, for the exit record
+    bool _ltrn_blending = false;            // EXITING is blending the feed forward onto the held stick demand this loop
+    bool _ltrn_jerk_cap_warned = false;     // one-shot LTRN_JERK cap warning latch
+    bool _ltrn_exit_escalated = false;      // EXITING has run out of time or distance and is stopping at full authority
+    uint32_t _ltrn_exit_escalate_ms = 0;    // system time the escalation fired, 0 if not escalated
+    uint32_t _ltrn_last_pitch_ms = 0;       // system time the pitch stick last exceeded LTRN_PIT_ARM, 0 if never
+    uint32_t _ltrn_retrig_start_ms = 0;     // system time the EXITING re-trigger reversal test first held, 0 if not held
 
 };
 

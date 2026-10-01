@@ -1,0 +1,39 @@
+# Jiyi 24GHz CAN radar pair -- native driver (RNGFNDn_TYPE 120)
+#
+# Replaces APM/scripts/jiyi_radar.lua. Delete that script from the SD card
+# before loading this: it would fail to get a CAN device (the port is no
+# longer Scripting) and report faults every boot.
+#
+# Load in TWO passes. The RNGFNDn_RECV_ID and RNGFNDn_JY_* parameters only
+# exist once RNGFNDn_TYPE is 120 and the board has rebooted.
+
+# ---- pass 1: load, then reboot ----
+CAN_P2_DRIVER    2
+CAN_D2_PROTOCOL  14
+CAN_P2_BITRATE   1000000
+RNGFND1_TYPE     120
+RNGFND1_ORIENT   25
+RNGFND2_TYPE     120
+RNGFND2_ORIENT   0
+PRX1_TYPE        4
+PRX_ALT_MIN      0
+PRX_IGN_GND      0
+RC8_OPTION       40
+RC9_OPTION       0
+
+# ---- pass 2: load after the reboot ----
+# RECV_ID selects the radar: 214 terrain, 220 obstacle.
+RNGFND1_RECV_ID  214
+RNGFND2_RECV_ID  220
+# Everything below is already the driver's per-role default and is listed only
+# so the field values are explicit. Values from jiyi_radar.lua.
+RNGFND1_SNR_MIN  0
+RNGFND1_JY_FLR   0
+RNGFND1_JY_MEDN  5
+RNGFND1_JY_ENCH  9
+RNGFND1_JY_IDLE  1
+RNGFND2_SNR_MIN  25
+RNGFND2_JY_FLR   0
+RNGFND2_JY_MEDN  5
+RNGFND2_JY_ENCH  8
+RNGFND2_JY_IDLE  0

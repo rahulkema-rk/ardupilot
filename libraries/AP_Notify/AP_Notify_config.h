@@ -128,6 +128,16 @@
 #define AP_NOTIFY_NEOPIXEL_ENABLED AP_NOTIFY_SERIALLED_ENABLED
 #endif
 
+// KFT JIYI K++ style RGB status LED, built on the NeoPixel serial LED output.
+// Not built for AP_Periph, which does not link RC_Channels.
+#ifndef AP_NOTIFY_KFT_LED_ENABLED
+#if defined(HAL_BUILD_AP_PERIPH)
+#define AP_NOTIFY_KFT_LED_ENABLED 0
+#else
+#define AP_NOTIFY_KFT_LED_ENABLED AP_NOTIFY_NEOPIXEL_ENABLED
+#endif
+#endif
+
 #ifndef AP_NOTIFY_TONEALARM_ENABLED
 #define AP_NOTIFY_TONEALARM_ENABLED ((defined(HAL_PWM_ALARM) || HAL_DSHOT_ALARM_ENABLED))
 #endif

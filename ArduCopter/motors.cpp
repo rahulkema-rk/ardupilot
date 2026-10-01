@@ -13,6 +13,16 @@ void Copter::arm_motors_check()
 {
     static int16_t arming_counter;
 
+    // the KFT two-stick (DJI-style) gesture completely replaces rudder
+    // arming when enabled, so that the two cannot stack on the same
+    // stick positions.  Note this also disables stick-triggered AutoTrim,
+    // which shares the rudder-arm gesture.
+    if (g2.kft_arm_en) {
+        arming_counter = 0;
+        kft_stick_arming_check();
+        return;
+    }
+
     // check if arming/disarm using rudder is allowed
     AP_Arming::RudderArming arming_rudder = arming.get_rudder_arming_type();
     if (arming_rudder == AP_Arming::RudderArming::IS_DISABLED) {
@@ -80,6 +90,146 @@ void Copter::arm_motors_check()
     // Yaw is centered so reset arming counter
     } else {
         arming_counter = 0;
+    }
+}
+
+// ============================================================================
+//  KFT | DJI-style two-stick arming
+// ----------------------------------------------------------------------------
+//  Native C++ port of dji_stick_arming.lua v1.5.0 (KFT).
+//
+//  Reads raw RC PWM on Roll(1)/Pitch(2)/Throttle(3)/Yaw(4) and arms or disarms
+//  when a two-stick gesture is held continuously.  Mode 2 transmitter:
+//
+//    ARM    : Throttle LOW, Yaw HIGH, Roll LOW,  Pitch HIGH  held KFT_ARM_MS
+//    DISARM : Throttle LOW, Yaw LOW,  Roll HIGH, Pitch HIGH  held KFT_ARM_DIS_MS
+//
+//  "LOW" means raw PWM below KFT_ARM_LOW, "HIGH" means above KFT_ARM_HIGH
+//  (defaults 1280/1720 for a Min=1051 Mid=1501 Max=1951 calibration).
+//  Breaking the gesture at any point resets the hold timer.  Arming is
+//  additionally gated on throttle still being LOW at the instant the hold
+//  completes, on top of the normal pre-arm/arm check pipeline which is
+//  entered through arming.arm() exactly as rudder arming does.
+//
+//  Enabled with KFT_ARM_EN=1, which also takes over from rudder arming; set
+//  ARMING_RUDDER=0 to silence the startup warning.
+//
+//  called from arm_motors_check() at 10Hz
+// ============================================================================
+
+// send a throttled "ARMING... 43%" style progress message, returns the
+// millis() to store as the new last-notification time
+uint32_t Copter::kft_stick_notify(const char *label, uint32_t elapsed_ms, uint32_t total_ms, uint32_t last_notify_ms)
+{
+    const uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - last_notify_ms < 500) {
+        return last_notify_ms;
+    }
+    const uint8_t pct = (total_ms > 0) ? MIN((uint32_t)100, (elapsed_ms * 100) / total_ms) : 0;
+    gcs().send_text(MAV_SEVERITY_INFO, "KFT | %s... %u%%", label, (unsigned)pct);
+    return now_ms;
+}
+
+// arm gesture: throttle LOW, yaw HIGH, roll LOW, pitch HIGH
+bool Copter::kft_stick_arm_gesture() const
+{
+    const uint16_t low = g2.kft_arm_low;
+    const uint16_t high = g2.kft_arm_high;
+    return channel_throttle->get_radio_in() < low &&
+           channel_yaw->get_radio_in()      > high &&
+           channel_roll->get_radio_in()     < low &&
+           channel_pitch->get_radio_in()    > high;
+}
+
+// disarm gesture: throttle LOW, yaw LOW, roll HIGH, pitch HIGH
+bool Copter::kft_stick_disarm_gesture() const
+{
+    const uint16_t low = g2.kft_arm_low;
+    const uint16_t high = g2.kft_arm_high;
+    return channel_throttle->get_radio_in() < low &&
+           channel_yaw->get_radio_in()      < low &&
+           channel_roll->get_radio_in()     > high &&
+           channel_pitch->get_radio_in()    > high;
+}
+
+// kft_stick_arming_check - arm or disarm on a held two-stick gesture
+// called at 10Hz from arm_motors_check() when KFT_ARM_EN is set
+void Copter::kft_stick_arming_check()
+{
+    const uint32_t now_ms = AP_HAL::millis();
+
+    // warn once if the built-in rudder arming is still configured.  We do not
+    // write the parameter ourselves: silently changing an arming parameter
+    // behind the pilot's back is worse than a warning, and the rudder-arm path
+    // is skipped in code anyway so the two can never stack.
+    if (!kft_stick_arm.rudder_warned &&
+        arming.get_rudder_arming_type() != AP_Arming::RudderArming::IS_DISABLED) {
+        kft_stick_arm.rudder_warned = true;
+        gcs().send_text(MAV_SEVERITY_WARNING, "KFT | stick arming active, set ARMING_RUDDER=0");
+    }
+
+    // do not act on stick positions we cannot trust
+    if (!rc().has_valid_input()) {
+        kft_stick_arm.holding_arm = false;
+        kft_stick_arm.holding_disarm = false;
+        return;
+    }
+
+    // ---- ARM ----------------------------------------------------------
+    if (kft_stick_arm_gesture()) {
+        if (!kft_stick_arm.holding_arm) {
+            kft_stick_arm.arm_start_ms = now_ms;
+            kft_stick_arm.arm_notify_ms = now_ms;
+            kft_stick_arm.holding_arm = true;
+            kft_stick_arm.holding_disarm = false;
+        } else {
+            const uint32_t elapsed_ms = now_ms - kft_stick_arm.arm_start_ms;
+            if (elapsed_ms >= (uint32_t)g2.kft_arm_ms) {
+                if (!motors->armed()) {
+                    // extra local guard on top of the standard arming checks
+                    if (channel_throttle->get_radio_in() < (uint16_t)g2.kft_arm_low) {
+                        if (arming.arm(AP_Arming::Method::RUDDER)) {
+                            gcs().send_text(MAV_SEVERITY_INFO, "KFT | *** ARMED ***");
+                        } else {
+                            gcs().send_text(MAV_SEVERITY_WARNING, "KFT | arm failed, fix pre-arm errors");
+                        }
+                    } else {
+                        gcs().send_text(MAV_SEVERITY_WARNING, "KFT | arm blocked, throttle not low");
+                    }
+                }
+                kft_stick_arm.holding_arm = false;
+            } else {
+                kft_stick_arm.arm_notify_ms = kft_stick_notify("ARMING", elapsed_ms, g2.kft_arm_ms, kft_stick_arm.arm_notify_ms);
+            }
+        }
+    } else {
+        kft_stick_arm.holding_arm = false;
+    }
+
+    // ---- DISARM -------------------------------------------------------
+    if (kft_stick_disarm_gesture()) {
+        if (!kft_stick_arm.holding_disarm) {
+            kft_stick_arm.disarm_start_ms = now_ms;
+            kft_stick_arm.disarm_notify_ms = now_ms;
+            kft_stick_arm.holding_disarm = true;
+            kft_stick_arm.holding_arm = false;
+        } else {
+            const uint32_t elapsed_ms = now_ms - kft_stick_arm.disarm_start_ms;
+            if (elapsed_ms >= (uint32_t)g2.kft_arm_dis_ms) {
+                if (motors->armed()) {
+                    if (arming.disarm(AP_Arming::Method::RUDDER)) {
+                        gcs().send_text(MAV_SEVERITY_INFO, "KFT | *** DISARMED ***");
+                    } else {
+                        gcs().send_text(MAV_SEVERITY_WARNING, "KFT | disarm failed");
+                    }
+                }
+                kft_stick_arm.holding_disarm = false;
+            } else {
+                kft_stick_arm.disarm_notify_ms = kft_stick_notify("DISARMING", elapsed_ms, g2.kft_arm_dis_ms, kft_stick_arm.disarm_notify_ms);
+            }
+        }
+    } else {
+        kft_stick_arm.holding_disarm = false;
     }
 }
 

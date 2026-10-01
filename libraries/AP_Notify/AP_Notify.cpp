@@ -42,6 +42,7 @@
 #include "ProfiLED.h"
 #include "ScriptingLED.h"
 #include "DShotLED.h"
+#include "KFT_LED.h"
 
 extern const AP_HAL::HAL& hal;
 
@@ -229,6 +230,31 @@ const AP_Param::GroupInfo AP_Notify::var_info[] = {
     // @RebootRequired: True
     AP_GROUPINFO("LED_LEN", 9, AP_Notify, _led_len, NOTIFY_LED_LEN_DEFAULT),
 
+#if AP_NOTIFY_KFT_LED_ENABLED
+    // @Param: KFTLED_CELLS
+    // @DisplayName: KFT status LED battery cell count
+    // @Description: Number of series cells in the pack, used to scale the per-cell thresholds of the KFT JIYI style status LED. Set to 0 to disable the battery states of that LED.
+    // @Range: 0 14
+    // @User: Advanced
+    AP_GROUPINFO("KFTLED_CELLS", 10, AP_Notify, _kftled_cells, 6),
+
+    // @Param: KFTLED_LOWV
+    // @DisplayName: KFT status LED low cell voltage
+    // @Description: Per-cell voltage below which the KFT JIYI style status LED shows the red/orange low battery warning.
+    // @Range: 2.5 4.2
+    // @Units: V
+    // @User: Advanced
+    AP_GROUPINFO("KFTLED_LOWV", 11, AP_Notify, _kftled_low_volt, 3.55f),
+
+    // @Param: KFTLED_CRITV
+    // @DisplayName: KFT status LED critical cell voltage
+    // @Description: Per-cell voltage below which the KFT JIYI style status LED shows the fast red critical battery blink. This is an indication only and does not trigger any failsafe.
+    // @Range: 2.5 4.2
+    // @Units: V
+    // @User: Advanced
+    AP_GROUPINFO("KFTLED_CRITV", 12, AP_Notify, _kftled_crit_volt, 3.40f),
+#endif  // AP_NOTIFY_KFT_LED_ENABLED
+
     AP_GROUPEND
 };
 
@@ -334,6 +360,11 @@ void AP_Notify::add_backends(void)
             case Notify_LED_NeoPixel:
             case Notify_LED_NeoPixelRGB:
                 ADD_BACKEND(NEW_NOTHROW NeoPixel());
+                break;
+#endif
+#if AP_NOTIFY_KFT_LED_ENABLED
+            case Notify_LED_KFT:
+                ADD_BACKEND(NEW_NOTHROW KFT_LED());
                 break;
 #endif
 #if AP_NOTIFY_PROFILED_ENABLED

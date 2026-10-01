@@ -267,7 +267,7 @@ define HAL_WITH_IO_MCU_BIDIR_DSHOT 1
 #define AP_SCRIPTING_ENABLED 1
 
 #adding lua files
-ROMFS scripts/kft_LUA_LED_001_5.lua scripts/kft_LUA_LED_001_5.lua
-ROMFS scripts/dji_stick_arming.lua scripts/dji_stick_arming.lua
-ROMFS scripts/bidirection_sharp_turn_v2.lua scripts/bidirection_sharp_turn_v2.lua
-ROMFS scripts/kft_auto_alt_override_v416.lua scripts/kft_auto_alt_override_v416.lua
+#ROMFS scripts/kft_LUA_LED_001_5.lua scripts/kft_LUA_LED_001_5.lua
+#ROMFS scripts/dji_stick_arming.lua scripts/dji_stick_arming.lua
+#ROMFS scripts/bidirection_sharp_turn_v2.lua scripts/bidirection_sharp_turn_v2.lua
+#ROMFS scripts/kft_auto_alt_override_v416.lua scripts/kft_auto_alt_override_v416.lua

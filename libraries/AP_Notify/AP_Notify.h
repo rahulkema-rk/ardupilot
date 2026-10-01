@@ -98,6 +98,9 @@ public:
 #if AP_NOTIFY_NEOPIXEL_ENABLED
         Notify_LED_NeoPixelRGB              = (1 << 18), // NeoPixel AdaFruit 4544 Worldsemi WS2811
 #endif
+#if AP_NOTIFY_KFT_LED_ENABLED
+        Notify_LED_KFT                      = (1 << 19), // KFT JIYI K++ style RGB status LED (NeoPixel chain)
+#endif
         Notify_LED_MAX
     };
 
@@ -220,6 +223,11 @@ public:
     uint8_t get_buzz_level() const  { return _buzzer_level; }
     uint8_t get_buzz_volume() const  { return _buzzer_volume; }
     uint8_t get_led_len() const { return _led_len; }
+#if AP_NOTIFY_KFT_LED_ENABLED
+    uint8_t get_kftled_cells() const { return _kftled_cells; }
+    float get_kftled_low_volt() const { return _kftled_low_volt; }
+    float get_kftled_crit_volt() const { return _kftled_crit_volt; }
+#endif
     uint32_t get_led_type() const { return _led_type; }
     int8_t get_rgb_led_brightness_percent() const;
 
@@ -247,6 +255,11 @@ private:
     AP_Int8 _buzzer_level;
     AP_Int8 _buzzer_volume;
     AP_Int8 _led_len;
+#if AP_NOTIFY_KFT_LED_ENABLED
+    AP_Int8 _kftled_cells;
+    AP_Float _kftled_low_volt;
+    AP_Float _kftled_crit_volt;
+#endif
 
     char _send_text[NOTIFY_TEXT_BUFFER_SIZE];
     uint32_t _send_text_updated_millis; // last time text changed

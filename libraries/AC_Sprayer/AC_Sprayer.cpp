@@ -52,6 +52,21 @@ const AP_Param::GroupInfo AC_Sprayer::var_info[] = {
     // @User: Standard
     AP_GROUPINFO("PUMP_MIN",   4, AC_Sprayer, _pump_min_pct, AC_SPRAYER_DEFAULT_PUMP_MIN),
 
+    // @Param: PUMP_MODE
+    // @DisplayName: Pump output mode
+    // @Description: Selects how the pump output is computed. 0: Rate-proportional, pump output scales with ground speed using SPRAY_PUMP_RATE and SPRAY_PUMP_MIN (constant volume per area). 1: Manual, pump output is fixed at SPRAY_PUMP_PCT regardless of ground speed, allowing the pilot to change pump rate in flight
+    // @Values: 0:Rate-proportional,1:Manual
+    // @User: Standard
+    AP_GROUPINFO("PUMP_MODE",  5, AC_Sprayer, _pump_mode, AC_SPRAYER_DEFAULT_PUMP_MODE),
+
+    // @Param: PUMP_PCT
+    // @DisplayName: Manual pump duty cycle
+    // @Description: Commanded pump output expressed as a percentage of the full servo range when SPRAY_PUMP_MODE is 1 (Manual). Takes effect immediately, no reboot required
+    // @Units: %
+    // @Range: 0 100
+    // @User: Standard
+    AP_GROUPINFO("PUMP_PCT",   6, AC_Sprayer, _pump_pct, AC_SPRAYER_DEFAULT_PUMP_PCT),
+
     AP_GROUPEND
 };
 
@@ -183,9 +198,18 @@ void AC_Sprayer::update()
 
     // if spraying or testing update the pump servo position
     if (should_be_spraying) {
-        float pos = ground_speed * _pump_pct_1ms;
-        pos = MAX(pos, 100 *_pump_min_pct); // ensure min pump speed
-        pos = MIN(pos,10000); // clamp to range
+        // Manual mode exists for pilot-direct pump control (matching K++/K3APro-style
+        // behaviour) where the pilot wants to change pump rate mid-flight without it
+        // being overridden by speed. SPRAY_PUMP_PCT is read live every loop so a
+        // PARAM_SET from the GCS takes effect on the next update.
+        float pos;
+        if (_pump_mode == 1) {
+            pos = constrain_float(_pump_pct, 0.0f, 100.0f) * 100.0f;
+        } else {
+            pos = ground_speed * _pump_pct_1ms;
+            pos = MAX(pos, 100 *_pump_min_pct); // ensure min pump speed
+            pos = MIN(pos,10000); // clamp to range
+        }
         SRV_Channels::move_servo(SRV_Channel::k_sprayer_pump, pos, 0, 10000);
         SRV_Channels::set_output_pwm(SRV_Channel::k_sprayer_spinner, _spinner_pwm);
         _flags.spraying = true;

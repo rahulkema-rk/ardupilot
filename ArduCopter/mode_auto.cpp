@@ -56,6 +56,13 @@ bool ModeAuto::init(bool ignore_checks)
         // reset flag indicating if pilot has applied roll or pitch inputs during landing
         copter.ap.land_repo_active = false;
 
+        // reset the semi-auto altitude bias so every AUTO entry starts at the
+        // planned mission heights
+        _sa_offset_cm = 0.0f;
+        _sa_rate_cms = 0.0f;
+        _sa_wp_alt_cm = 0.0f;
+        _sa_active = false;
+
 #if AC_PRECLAND_ENABLED
         // initialise precland state machine
         copter.precland_statemachine.init();
@@ -112,6 +119,9 @@ void ModeAuto::run()
 
         mission.update();
     }
+
+    // apply the pilot's semi-auto altitude bias before dispatching the command
+    update_semi_auto();
 
     // call the correct auto controller
     switch (_mode) {
@@ -172,6 +182,155 @@ void ModeAuto::run()
         copter.logger.Write_Mode((uint8_t)copter.flightmode->mode_number(), ModeReason::AUTO_RTL_EXIT);
 #endif
     }
+}
+
+// minimum altitude above home, in cm, that the semi-auto bias is allowed to
+// produce.  the bias may never pull the vehicle below this.
+#define AUTO_SEMI_AUTO_ALT_FLOOR_CM 100.0f
+
+// semi_auto_allowed - true if the pilot may currently move the altitude bias.
+// deliberately an allow-list: any command type we have not explicitly cleared
+// is rejected, so a future command type cannot silently inherit a bias.
+bool ModeAuto::semi_auto_allowed() const
+{
+    if (g2.kft_sa_enable == 0) {
+        return false;
+    }
+
+    // only while actually flying the mission
+    if (!motors->armed() || copter.ap.land_complete) {
+        return false;
+    }
+
+    // only during ordinary navigation legs.  this alone excludes the takeoff,
+    // land and RTL sub-modes.
+    if (_mode != SubMode::WP) {
+        return false;
+    }
+
+    // never bias a takeoff, a landing or a return.  a bias silently riding into
+    // a landing approach is how you break a spray boom.
+    switch (mission.get_current_nav_cmd().id) {
+    case MAV_CMD_NAV_WAYPOINT:
+    case MAV_CMD_NAV_SPLINE_WAYPOINT:
+    case MAV_CMD_NAV_LOITER_UNLIM:
+    case MAV_CMD_NAV_LOITER_TURNS:
+    case MAV_CMD_NAV_LOITER_TIME:
+        break;
+    default:
+        return false;
+    }
+
+    // and never once the mission has entered its landing or return sequence
+    if (mission.get_in_landing_sequence_flag() || mission.get_in_return_path_flag()) {
+        return false;
+    }
+
+    return true;
+}
+
+// apply_semi_auto_altitude_limits - clamp the resulting altitude, not just the
+// bias.  a high waypoint plus an individually-legal bias can still put the
+// vehicle through the fence.
+void ModeAuto::apply_semi_auto_altitude_limits()
+{
+    Location dest;
+    if (!wp_nav->get_wp_destination_loc(dest) ||
+        !dest.change_alt_frame(Location::AltFrame::ABOVE_HOME)) {
+        // no terrain data or no destination yet - leave the bias untouched
+        // rather than guessing at an altitude
+        _sa_wp_alt_cm = 0.0f;
+        return;
+    }
+    const float planned_alt_cm = dest.alt;
+    _sa_wp_alt_cm = planned_alt_cm;
+
+    // the bias may only ever be pulled back towards zero here: if the planned
+    // mission itself violates a limit that is not this feature's problem to
+    // fix, and forcing a negative bias would fly the mission lower than planned
+    const float min_offset_cm = MIN(AUTO_SEMI_AUTO_ALT_FLOOR_CM - planned_alt_cm, 0.0f);
+    if (_sa_offset_cm < min_offset_cm) {
+        // hold at the limit rather than winding up, so the stick still has
+        // immediate authority on the way back up
+        _sa_offset_cm = min_offset_cm;
+        _sa_rate_cms = MAX(_sa_rate_cms, 0.0f);
+    }
+
+#if AP_FENCE_ENABLED
+    if (copter.fence.get_enabled_fences() & AC_FENCE_TYPE_ALT_MAX) {
+        const float max_offset_cm = MAX(copter.fence.get_safe_alt_max() * 100.0f - planned_alt_cm, 0.0f);
+        if (_sa_offset_cm > max_offset_cm) {
+            _sa_offset_cm = max_offset_cm;
+            _sa_rate_cms = MIN(_sa_rate_cms, 0.0f);
+        }
+    }
+#endif
+}
+
+// update_semi_auto - integrate the pilot's stick into an altitude bias and
+// re-assert it on the position controller.  called every loop from run().
+void ModeAuto::update_semi_auto()
+{
+    if (g2.kft_sa_enable == 0) {
+        // feature disabled - take no other code path and never touch the
+        // position controller, so behaviour is identical to stock
+        _sa_offset_cm = 0.0f;
+        _sa_rate_cms = 0.0f;
+        _sa_active = false;
+        return;
+    }
+
+    if (!semi_auto_allowed()) {
+        _sa_rate_cms = 0.0f;
+        _sa_active = false;
+        // NOTE: the existing offset is deliberately held, not zeroed - gating
+        // out mid-mission must not cause an altitude step.  init() resets it.
+    } else {
+        _sa_active = true;
+
+        // reuse the standard pilot climb rate helper: it already applies the
+        // throttle deadzone, the channel mid-point and any stick reversal, so
+        // the feel matches ALT_HOLD exactly.  the helper scales the up and down
+        // halves by different parameters, so normalise each side against its
+        // own limit before rescaling onto our rate.
+        const float pilot_cms = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
+        float frac = 0.0f;
+        if (is_positive(pilot_cms)) {
+            frac = pilot_cms / MAX(float(g.pilot_speed_up), 1.0f);
+        } else if (is_negative(pilot_cms)) {
+            frac = pilot_cms / MAX(float(get_pilot_speed_dn()), 1.0f);
+        }
+        _sa_rate_cms = constrain_float(frac, -1.0f, 1.0f) * g2.kft_sa_rate;
+
+        _sa_offset_cm = constrain_float(_sa_offset_cm + _sa_rate_cms * G_Dt,
+                                        g2.kft_sa_min, g2.kft_sa_max);
+
+        apply_semi_auto_altitude_limits();
+    }
+
+    // Re-assert EVERY loop.  wp_and_spline_init() re-inits the Z controller on
+    // each new leg, and AC_PosControl zeroes the offset target if it is not
+    // refreshed within 3s.  Writing the absolute value each loop also overrides
+    // the controller's own integration of the offset target.  Do not optimise
+    // this into a write-on-change.  Feeding the rate as the velocity term lets
+    // the controller's own shaping handle jerk limiting.
+    pos_control->set_posvelaccel_offset_target_z_cm(_sa_offset_cm, _sa_rate_cms, 0.0f);
+
+#if HAL_LOGGING_ENABLED
+    copter.Log_Write_SemiAuto(_sa_offset_cm, _sa_rate_cms, _sa_wp_alt_cm, _sa_active);
+#endif
+}
+
+// semi_auto_send_telemetry - publish the live bias so the operator can see how
+// far off the planned height they are.  the spray rate is calibrated for the
+// planned height, so this number matters.
+void ModeAuto::semi_auto_send_telemetry()
+{
+    if (g2.kft_sa_enable == 0 || copter.flightmode != &copter.mode_auto) {
+        return;
+    }
+    // sent in metres to match how altitudes are displayed in the GCS
+    gcs().send_named_float("SAOFS", _sa_offset_cm * 0.01f);
 }
 
 // return true if a position estimate is required
